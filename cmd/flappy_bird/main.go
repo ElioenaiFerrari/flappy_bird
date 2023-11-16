@@ -2,135 +2,106 @@ package main
 
 import (
 	"fmt"
-	"math/rand"
-	"sort"
 	"time"
 
+	"github.com/ElioenaiFerrari/flappy-bird/components"
+	"github.com/ElioenaiFerrari/flappy-bird/config"
 	rl "github.com/gen2brain/raylib-go/raylib"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
-type Apple struct {
-	x, y          int32
-	width, height int32
-	Color         rl.Color
+type History struct {
+	Score     int        `json:"score" gorm:"column:score"`
+	CreatedAt *time.Time `json:"created_at" gorm:"column:created_at"`
 }
 
-func unload(
-	texture rl.Texture2D,
-	bird *rl.Image,
-	eatNoise rl.Sound,
-	jumpNoise rl.Sound,
-	gameOverNoise rl.Sound,
-) {
-	rl.UnloadTexture(texture)
-	rl.UnloadImage(bird)
-	rl.StopSound(jumpNoise)
-	rl.StopSound(eatNoise)
-	rl.StopSound(gameOverNoise)
-	rl.UnloadSound(eatNoise)
-	rl.UnloadSound(jumpNoise)
-	rl.UnloadSound(gameOverNoise)
-	rl.CloseAudioDevice()
+func getDB() *gorm.DB {
+	db, err := gorm.Open(sqlite.Open("db.sqlite"))
+	if err != nil {
+		panic("failed to connect database")
+	}
+
+	db.AutoMigrate(&History{})
+	return db
 }
 
 func gameOver(
-	screenWidth int32,
-	screenHeight int32,
-	texture rl.Texture2D,
-	bird *rl.Image,
 	score int,
-	eatNoise rl.Sound,
-	jumpNoise rl.Sound,
+	background rl.Texture2D,
 	gameOverNoise rl.Sound,
 ) {
+	history := &History{
+		Score: score,
+	}
+
+	if err := db.Create(&history).Error; err != nil {
+		panic(err)
+	}
+
 	rl.BeginDrawing()
 	rl.ClearBackground(rl.RayWhite)
-	rl.DrawText("Game Over", screenWidth/2-50, screenHeight/2, 20, rl.Black)
-	rl.DrawText(fmt.Sprintf("Score: %d", score), screenWidth/2-50, screenHeight/2+20, 20, rl.Black)
+	rl.DrawText("Game Over", config.ScreenWidth/2-50, config.ScreenHeight/2, 20, rl.Black)
+	rl.DrawText(fmt.Sprintf("Score: %d", score), config.ScreenWidth/2-50, config.ScreenHeight/2+20, 20, rl.Black)
 	rl.PlaySound(gameOverNoise)
 	rl.EndDrawing()
 
 	time.Sleep(2 * time.Second)
-	unload(texture, bird, eatNoise, jumpNoise, gameOverNoise)
+	rl.UnloadTexture(background)
 }
 
-func play(
-	screenWidth int32,
-	screenHeight int32,
-) {
+func play() {
 	rl.InitAudioDevice()
-	eatNoise := rl.LoadSound("assets/eat.mp3")
-	jumpNoise := rl.LoadSound("assets/jump.mp3")
 	gameOverNoise := rl.LoadSound("assets/game-over.mp3")
-	rl.InitWindow(screenWidth, screenHeight, "Flappy Bird")
+	rl.InitWindow(config.ScreenWidth, config.ScreenHeight, "Flappy Bird")
 	rl.SetTargetFPS(60)
 
-	bird := rl.LoadImage("assets/bird.png")
-	texture := rl.LoadTextureFromImage(bird)
-	xCoords := int32(screenWidth/2 - texture.Width/2)
-	yCoords := int32(screenHeight/2 - texture.Height/2)
-
-	texture.Width = 50
-	texture.Height = 30
-
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	appleLoc := r.Int31n(screenHeight - 20)
-	apples := []Apple{
-		{
-			x:      screenWidth,
-			y:      appleLoc,
-			width:  20,
-			height: 20,
-			Color:  rl.Red,
-		},
+	bird := components.NewBird()
+	apples := []*components.Apple{
+		components.NewApple(),
 	}
+	background := rl.LoadTexture("assets/background.png")
 
 	score := 0
-
 	for !rl.WindowShouldClose() {
 		rl.BeginDrawing()
 
-		rl.DrawTexture(texture, xCoords, yCoords, rl.White)
-		rl.DrawText(fmt.Sprintf("Score: %d", score), 10, 10, 20, rl.Black)
 		rl.ClearBackground(rl.RayWhite)
+		rl.DrawTexture(background, 0, 0, rl.White)
+		rl.DrawTexture(bird.Texture, int32(bird.X), int32(bird.Y), rl.White)
+
+		rl.DrawText(fmt.Sprintf("Score: %d", score), 10, 10, 20, rl.Black)
 		if rl.IsKeyDown(rl.KeySpace) {
-			rl.PlaySound(jumpNoise)
-			yCoords -= 5
+			bird.Up()
 		} else {
-			yCoords++
+			bird.Down()
 		}
 
 		for i, apple := range apples {
-			rl.DrawRectangle(apple.x, apple.y, apple.width, apple.height, apple.Color)
-			apples[i].x -= 2
-
-			if apple.x < 0 {
-				apples[i].x = screenWidth
-				apples[i].y = r.Int31n(screenHeight - 20)
-			}
+			rl.DrawTexture(apple.Texture, apple.X, apple.Y, rl.White)
+			apples[i].Update()
 
 			if rl.CheckCollisionRecs(
-				rl.Rectangle{
-					X:      float32(xCoords),
-					Y:      float32(yCoords),
-					Width:  float32(texture.Width),
-					Height: float32(texture.Height)},
-				rl.Rectangle{
-					X:      float32(apple.x),
-					Y:      float32(apple.y),
-					Width:  float32(apple.width),
-					Height: float32(apple.height),
-				},
+				bird.CollisionRec(),
+				apple.CollisionRec(),
 			) {
-				apples[i].x = screenWidth
-				apples[i].y = r.Int31n(screenHeight - 20)
-				rl.PlaySound(eatNoise)
+				apples[i].X = 0
+				bird.Eat()
+				apples[i].Update()
 				score++
+				if len(apples) < 5 {
+					apples = append(apples, components.NewApple())
+				}
+
 			}
 		}
 
-		if yCoords > screenHeight {
-			gameOver(screenWidth, screenHeight, texture, bird, score, eatNoise, jumpNoise, gameOverNoise)
+		if bird.Y > config.ScreenHeight {
+			gameOver(score, background, gameOverNoise)
+			bird.Close()
+			for _, apple := range apples {
+				apple.Close()
+			}
 			break
 		}
 
@@ -139,18 +110,17 @@ func play(
 
 }
 
-func history(
-	screenWidth int32,
-	screenHeight int32,
-) {
-	history := []int{
-		10,
-		20,
-		30,
-		100,
+func history() {
+	var history []History
+	if err := db.
+		Order("score desc").
+		Limit(10).
+		Find(&history).
+		Error; err != nil {
+		panic(err)
 	}
 
-	rl.InitWindow(screenWidth, screenHeight, "Flappy Bird")
+	rl.InitWindow(config.ScreenWidth, config.ScreenHeight, "Flappy Bird")
 	rl.SetTargetFPS(60)
 
 	for !rl.WindowShouldClose() {
@@ -158,50 +128,42 @@ func history(
 
 		rl.ClearBackground(rl.RayWhite)
 
-		rl.DrawText("History", screenWidth/2-50, screenHeight/4, 20, rl.Black)
+		rl.DrawText("History", config.ScreenWidth/2-50, config.ScreenHeight/4, 20, rl.Black)
 
 		text := ""
 
-		sort.Slice(history, func(i, j int) bool {
-			return history[i] > history[j]
-		})
-		for i, score := range history {
+		for i, h := range history {
 			// make text with borders
-
-			text += fmt.Sprintf("%d. %d\n\n", i+1, score)
+			text += fmt.Sprintf("%d. %d\n\n", i+1, h.Score)
 		}
 
-		rl.DrawText(text, screenWidth/2-50, screenHeight/3, 20, rl.Black)
+		rl.DrawText(text, config.ScreenWidth/2-50, config.ScreenHeight/3, 20, rl.Black)
 
 		rl.EndDrawing()
 	}
 }
 
-func menu(
-	screenWidth int32,
-	screenHeight int32,
-) {
-
-	rl.InitWindow(screenWidth, screenHeight, "Flappy Bird")
+func menu() {
+	rl.InitWindow(config.ScreenWidth, config.ScreenHeight, "Flappy Bird")
 	rl.SetTargetFPS(60)
 
 	playButton := rl.Rectangle{
-		X:      float32(screenWidth/2 - 50),
-		Y:      float32(screenHeight/2 - 50),
+		X:      float32(config.ScreenWidth/2 - 50),
+		Y:      float32(config.ScreenHeight/2 - 50),
 		Width:  100,
 		Height: 50,
 	}
 
 	historyButton := rl.Rectangle{
-		X:      float32(screenWidth/2 - 50),
-		Y:      float32(screenHeight / 2),
+		X:      float32(config.ScreenWidth/2 - 50),
+		Y:      float32(config.ScreenHeight / 2),
 		Width:  100,
 		Height: 50,
 	}
 
 	exitButton := rl.Rectangle{
-		X:      float32(screenWidth/2 - 50),
-		Y:      float32(screenHeight/2 + 50),
+		X:      float32(config.ScreenWidth/2 - 50),
+		Y:      float32(config.ScreenHeight/2 + 50),
 		Width:  100,
 		Height: 50,
 	}
@@ -210,15 +172,13 @@ func menu(
 		rl.BeginDrawing()
 
 		rl.ClearBackground(rl.RayWhite)
-
-		rl.DrawText("Flappy Bird", screenWidth/2-50, screenHeight/4, 20, rl.Black)
-
+		rl.DrawText("Flappy Bird", config.ScreenWidth/2-50, config.ScreenHeight/4, 20, rl.Black)
 		if rl.CheckCollisionPointRec(rl.GetMousePosition(), playButton) && rl.IsMouseButtonPressed(rl.MouseLeftButton) {
-			play(screenWidth, screenHeight)
+			play()
 		}
 
 		if rl.CheckCollisionPointRec(rl.GetMousePosition(), historyButton) && rl.IsMouseButtonPressed(rl.MouseLeftButton) {
-			history(screenWidth, screenHeight)
+			history()
 		}
 
 		if rl.CheckCollisionPointRec(rl.GetMousePosition(), exitButton) && rl.IsMouseButtonPressed(rl.MouseLeftButton) {
@@ -232,16 +192,19 @@ func menu(
 		rl.DrawRectangleRec(exitButton, rl.Red)
 
 		rl.DrawText("Play", int32(playButton.X+playButton.Width/2-20), int32(playButton.Y+playButton.Height/2-10), 20, rl.Black)
-		rl.DrawText("History", int32(historyButton.X+historyButton.Width/2-25), int32(historyButton.Y+historyButton.Height/2-10), 20, rl.Black)
+		rl.DrawText("History", int32(historyButton.X+historyButton.Width/2-35), int32(historyButton.Y+historyButton.Height/2-10), 20, rl.Black)
 		rl.DrawText("Exit", int32(exitButton.X+exitButton.Width/2-20), int32(exitButton.Y+exitButton.Height/2-10), 20, rl.Black)
 
 		rl.EndDrawing()
 	}
 }
 
-func main() {
-	screenWidth := int32(800)
-	screenHeight := int32(600)
+var (
+	db = getDB()
+)
 
-	menu(screenWidth, screenHeight)
+func main() {
+	rl.SetTraceLogLevel(rl.LogError)
+
+	menu()
 }
