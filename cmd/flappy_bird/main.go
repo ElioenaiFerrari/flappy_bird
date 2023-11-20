@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/ElioenaiFerrari/flappy-bird/components"
@@ -50,6 +51,18 @@ func gameOver(
 	rl.UnloadTexture(background)
 }
 
+func buildScenario() (background rl.Texture2D, ground rl.Texture2D, render func()) {
+	background = rl.LoadTexture("assets/background.png")
+	ground = rl.LoadTexture("assets/ground.png")
+	ground.Width = config.ScreenWidth
+	render = func() {
+		rl.DrawTexture(background, 0, 0, rl.White)
+		rl.DrawTexture(ground, 0, config.ScreenHeight-ground.Height, rl.White)
+	}
+
+	return
+}
+
 func play() {
 	rl.InitAudioDevice()
 	gameOverNoise := rl.LoadSound("assets/game-over.mp3")
@@ -57,17 +70,18 @@ func play() {
 	rl.SetTargetFPS(60)
 
 	bird := components.NewBird()
+	background, ground, render := buildScenario()
+
 	apples := []*components.Apple{
-		components.NewApple(),
+		components.NewApple(ground.Height),
 	}
-	background := rl.LoadTexture("assets/background.png")
 
 	score := 0
 	for !rl.WindowShouldClose() {
 		rl.BeginDrawing()
 
 		rl.ClearBackground(rl.RayWhite)
-		rl.DrawTexture(background, 0, 0, rl.White)
+		render()
 		rl.DrawTexture(bird.Texture, int32(bird.X), int32(bird.Y), rl.White)
 
 		rl.DrawText(fmt.Sprintf("Score: %d", score), 10, 10, 20, rl.Black)
@@ -79,7 +93,7 @@ func play() {
 
 		for i, apple := range apples {
 			rl.DrawTexture(apple.Texture, apple.X, apple.Y, rl.White)
-			apples[i].Update()
+			apples[i].Update(ground.Height)
 
 			if rl.CheckCollisionRecs(
 				bird.CollisionRec(),
@@ -87,16 +101,23 @@ func play() {
 			) {
 				apples[i].X = 0
 				bird.Eat()
-				apples[i].Update()
+				apples[i].Update(ground.Height)
 				score++
 				if len(apples) < 5 {
-					apples = append(apples, components.NewApple())
+					apples = append(apples, components.NewApple(ground.Height))
 				}
-
 			}
 		}
 
-		if bird.Y > config.ScreenHeight {
+		if rl.CheckCollisionRecs(
+			bird.CollisionRec(),
+			rl.Rectangle{
+				X:      0,
+				Y:      float32(config.ScreenHeight - ground.Height),
+				Width:  float32(ground.Width),
+				Height: float32(ground.Height),
+			},
+		) {
 			gameOver(score, background, gameOverNoise)
 			bird.Close()
 			for _, apple := range apples {
@@ -107,7 +128,7 @@ func play() {
 
 		rl.EndDrawing()
 	}
-
+	runtime.GC()
 }
 
 func history() {
@@ -119,7 +140,6 @@ func history() {
 		Error; err != nil {
 		panic(err)
 	}
-
 	rl.InitWindow(config.ScreenWidth, config.ScreenHeight, "Flappy Bird")
 	rl.SetTargetFPS(60)
 
@@ -141,6 +161,8 @@ func history() {
 
 		rl.EndDrawing()
 	}
+	runtime.GC()
+
 }
 
 func menu() {

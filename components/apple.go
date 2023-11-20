@@ -14,7 +14,7 @@ type Apple struct {
 	r       *rand.Rand
 }
 
-func NewApple() *Apple {
+func NewApple(groundHeight int32) *Apple {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	a := &Apple{
@@ -22,7 +22,7 @@ func NewApple() *Apple {
 	}
 
 	a.X = config.ScreenWidth
-	a.Y = r.Int31n(config.ScreenHeight - 20)
+	a.Y = r.Int31n(config.ScreenHeight - groundHeight - 60)
 	a.Texture.Width = 25
 	a.Texture.Height = 25
 	a.r = r
@@ -39,11 +39,11 @@ func (a *Apple) CollisionRec() rl.Rectangle {
 	}
 }
 
-func (a *Apple) Update() {
+func (a *Apple) Update(groundHeight int32) {
 	a.X -= 2
 	if a.X <= 0 {
 		a.X = config.ScreenWidth
-		a.Y = a.r.Int31n(config.ScreenHeight - 20)
+		a.Y = a.r.Int31n(config.ScreenHeight - groundHeight - 60)
 	}
 
 }
